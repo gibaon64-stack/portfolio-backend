@@ -34,11 +34,12 @@ def create_app(test_config=None):
         app,
         resources={r"/api/*": {"origins": app.config["FRONTEND_ORIGINS"]}},
         supports_credentials=True,
-        allow_headers=["Content-Type", "X-CSRF-TOKEN"],
+        allow_headers=["Content-Type", "X-CSRF-TOKEN", "Idempotency-Key"],
     )
 
     from app import models
     from app.routes.admin import admin_routes
+    from app.routes.assistant import assistant_routes
     from app.routes.auth import auth_routes
     from app.routes.health import health_routes
     from app.routes.public import public_routes
@@ -47,6 +48,7 @@ def create_app(test_config=None):
     app.register_blueprint(public_routes)
     app.register_blueprint(auth_routes)
     app.register_blueprint(admin_routes)
+    app.register_blueprint(assistant_routes)
 
     @app.errorhandler(413)
     def request_too_large(_error):

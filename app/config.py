@@ -31,6 +31,8 @@ class Config:
     ) == "1"
     CLOUDINARY_REQUIRED = os.getenv("CLOUDINARY_REQUIRED", "1" if os.getenv("RENDER") else "0") == "1"
     CLOUDINARY_FOLDER = os.getenv("CLOUDINARY_FOLDER", "mabrixel")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     FRONTEND_ORIGINS = list(dict.fromkeys(
         ["https://portfolio-mabrixel.netlify.app"]
         + [

@@ -38,6 +38,17 @@ frontend repository contains the Netlify build configuration and proxies
 JWT cookies through the proxy; the backend also allows the configured frontend
 origin for credentialed CORS requests.
 
+Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and
+`CLOUDINARY_API_SECRET` in the Render backend service's protected environment
+settings. These values are required because production uploads do not fall back
+to local disk. Alternatively, configure a `CLOUDINARY_URL` instead of the three
+individual values.
+
+Set `GEMINI_API_KEY` in the same protected environment settings to enable
+Mabrook's backend chat endpoint (`POST /api/assistant/chat`). The key is never
+sent to the browser. `GEMINI_MODEL` may be set to another model enabled for the
+Google AI project; otherwise the current default is used.
+
 Review the Render plan and database retention settings before relying on them.
 Production media is stored on Cloudinary rather than Render's temporary disk.
 
@@ -46,12 +57,16 @@ Production media is stored on Cloudinary rather than Render's temporary disk.
 Configure `FRONTEND_ORIGIN`, `DATABASE_URL`, `SECRET_KEY`, `JWT_SECRET_KEY`,
 `COOKIE_SECURE`, and `CLOUDINARY_REQUIRED` through the environment. Configure
 Cloudinary using either `CLOUDINARY_URL` or the three `CLOUDINARY_*` variables.
+Configure `GEMINI_API_KEY` to enable the rate-limited Mabrook assistant and
+optionally set `GEMINI_MODEL`.
 Use unique random signing keys and the existing durable production database.
 Never commit `.env` files, local databases, or credential values.
 
 The admin image library stores Cloudinary secure URLs and public asset IDs.
 Image upload contexts are separated into `mabrixel/projects`, `services`,
 `about`, `contact`, and `homepage`; deleting an image is an explicit admin action.
+Profile images always require Cloudinary so a temporary local upload URL cannot
+be saved as a persistent profile image.
 
 Project records include separate short and detailed descriptions, thumbnail and
 live/repository URLs, technology lists, featured and publication flags. The

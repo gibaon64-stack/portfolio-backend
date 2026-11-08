@@ -238,6 +238,10 @@ class Inquiry(db.Model):
     budget = db.Column(db.String(80))
     timeline = db.Column(db.String(120))
     message = db.Column(db.Text, nullable=False)
+    consultation_date = db.Column(db.Date)
+    consultation_time = db.Column(db.String(5))
+    additional_requirements = db.Column(db.Text)
+    idempotency_key = db.Column(db.String(64), unique=True)
     status = db.Column(db.String(24), nullable=False, default="pending")
     internal_notes = db.Column(db.Text, nullable=False, default="")
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, index=True)
@@ -253,6 +257,9 @@ class Inquiry(db.Model):
             "budget": self.budget,
             "timeline": self.timeline,
             "message": self.message,
+            "consultation_date": self.consultation_date.isoformat() if self.consultation_date else None,
+            "consultation_time": self.consultation_time,
+            "additional_requirements": self.additional_requirements,
             "status": self.status,
             "internal_notes": self.internal_notes,
             "created_at": self.created_at.isoformat(),

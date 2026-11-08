@@ -1,11 +1,15 @@
 from io import BytesIO
 from pathlib import Path
+from datetime import datetime, timedelta
 import secrets
 import tempfile
 import unittest
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
+import httpx
 from PIL import Image
+from cloudinary.exceptions import AuthorizationRequired
 
 from app import create_app
 from app.extensions import db
@@ -75,11 +79,12 @@ class PortfolioApiTests(unittest.TestCase):
             headers={
                 "Origin": frontend_origin,
                 "Access-Control-Request-Method": "POST",
-                "Access-Control-Request-Headers": "content-type",
+                "Access-Control-Request-Headers": "content-type,idempotency-key",
             },
         )
         self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), frontend_origin)
         self.assertEqual(response.headers.get("Access-Control-Allow-Credentials"), "true")
+        self.assertIn("idempotency-key", response.headers.get("Access-Control-Allow-Headers", "").lower())
 
     def test_seeded_public_content_uses_user_supplied_services(self):
         seed_content()
@@ -134,6 +139,42 @@ class PortfolioApiTests(unittest.TestCase):
         self.assertEqual(Inquiry.query.first().email, "client@example.com")
         self.assertEqual(Inquiry.query.first().business_name, "Example Studio")
         self.assertEqual(Inquiry.query.first().timeline, "Next month")
+
+    def test_consultation_validation_persistence_and_idempotency(self):
+        consultation_date = (datetime.now(ZoneInfo("Africa/Nairobi")) + timedelta(days=2)).date().isoformat()
+        payload = {
+            "name": "A Client",
+            "email": "client@example.com",
+            "phone": "+254 700 000 000",
+            "business_name": "Example Studio",
+            "service": "E-commerce Websites",
+            "message": "I need an online store.",
+            "consultation_date": consultation_date,
+            "consultation_time": "14:30",
+            "additional_requirements": "Connect the product inventory.",
+        }
+        headers = {"Idempotency-Key": "consultation-test-001"}
+        response = self.client.post("/api/inquiries", json=payload, headers=headers)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Inquiry.query.count(), 1)
+        saved = Inquiry.query.one()
+        self.assertEqual(saved.consultation_date.isoformat(), consultation_date)
+        self.assertEqual(saved.consultation_time, "14:30")
+        self.assertEqual(saved.additional_requirements, "Connect the product inventory.")
+
+        duplicate = self.client.post("/api/inquiries", json=payload, headers=headers)
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertEqual(duplicate.json["id"], response.json["id"])
+        self.assertEqual(Inquiry.query.count(), 1)
+
+        payload["consultation_date"] = "2000-01-01"
+        invalid_date = self.client.post(
+            "/api/inquiries",
+            json=payload,
+            headers={"Idempotency-Key": "consultation-test-002"},
+        )
+        self.assertEqual(invalid_date.status_code, 400)
+        self.assertEqual(Inquiry.query.count(), 1)
 
     def test_public_registration_hashes_password_and_duplicate_is_rejected(self):
         registration = {
@@ -374,7 +415,8 @@ class PortfolioApiTests(unittest.TestCase):
 
     def test_cloudinary_upload_saves_secure_asset_reference(self):
         self.app.config.update({
-            "USE_CLOUDINARY": True,
+            "USE_CLOUDINARY": False,
+            "CLOUDINARY_REQUIRED": True,
             "CLOUDINARY_CLOUD_NAME": "test-cloud",
             "CLOUDINARY_API_KEY": "test-key",
             "CLOUDINARY_API_SECRET": "test-secret",
@@ -421,6 +463,107 @@ class PortfolioApiTests(unittest.TestCase):
         with self.app.app_context():
             self.assertTrue(configure_cloudinary())
         self.assertEqual(cloudinary.config().cloud_name, "test-cloud")
+
+    def test_cloudinary_required_overrides_disabled_use_flag(self):
+        self.app.config.update({
+            "USE_CLOUDINARY": False,
+            "CLOUDINARY_REQUIRED": True,
+            "CLOUDINARY_CLOUD_NAME": "test-cloud",
+            "CLOUDINARY_API_KEY": "test-key",
+            "CLOUDINARY_API_SECRET": "test-secret",
+        })
+        with self.app.app_context():
+            self.assertTrue(configure_cloudinary())
+
+    def test_cloudinary_authorization_error_is_actionable(self):
+        self.app.config.update({
+            "USE_CLOUDINARY": True,
+            "CLOUDINARY_CLOUD_NAME": "test-cloud",
+            "CLOUDINARY_API_KEY": "test-key",
+            "CLOUDINARY_API_SECRET": "test-secret",
+        })
+        login = self.login_admin()
+        headers = {"X-CSRF-TOKEN": login.json["csrf_token"]}
+        image_buffer = BytesIO()
+        Image.new("RGB", (8, 8), color="blue").save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+        with patch(
+            "app.routes.admin.cloudinary.uploader.upload",
+            side_effect=AuthorizationRequired("credentials rejected"),
+        ):
+            response = self.client.post(
+                "/api/admin/uploads",
+                data={"image": (image_buffer, "profile.png"), "context": "projects"},
+                headers=headers,
+            )
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("rejected its server credentials", response.json["error"])
+        self.assertNotIn("credentials rejected", response.json["error"])
+
+    def test_profile_upload_requires_cloudinary_and_reports_missing_configuration(self):
+        self.app.config.update({
+            "USE_CLOUDINARY": False,
+            "CLOUDINARY_REQUIRED": False,
+            "CLOUDINARY_CLOUD_NAME": None,
+            "CLOUDINARY_API_KEY": None,
+            "CLOUDINARY_API_SECRET": None,
+        })
+        login = self.login_admin()
+        headers = {"X-CSRF-TOKEN": login.json["csrf_token"]}
+        image_buffer = BytesIO()
+        Image.new("RGB", (8, 8), color="green").save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+        response = self.client.post(
+            "/api/admin/uploads",
+            data={"image": (image_buffer, "profile.png"), "context": "about"},
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Profile images require Cloudinary", response.json["error"])
+        self.assertEqual(MediaAsset.query.count(), 0)
+
+    def test_profile_photo_url_persists_and_is_returned_publicly(self):
+        login = self.login_admin()
+        headers = {"X-CSRF-TOKEN": login.json["csrf_token"]}
+        photo_url = "https://res.cloudinary.com/test-cloud/image/upload/profile.webp"
+        saved = self.client.put(
+            "/api/admin/profile",
+            json={"name": "Test Profile", "photo_url": photo_url},
+            headers=headers,
+        )
+        self.assertEqual(saved.status_code, 200)
+        public = self.client.get("/api/portfolio")
+        self.assertEqual(public.json["profile"]["photo_url"], photo_url)
+
+    def test_assistant_requires_server_key_and_uses_gemini_sdk(self):
+        self.assertFalse(self.client.get("/api/assistant/status").json["available"])
+        missing_key = self.client.post("/api/assistant/chat", json={"message": "What services do you offer?"})
+        self.assertEqual(missing_key.status_code, 503)
+
+        self.app.config["GEMINI_API_KEY"] = "test-gemini-key"
+        self.app.config["GEMINI_MODEL"] = "test-model"
+        self.assertTrue(self.client.get("/api/assistant/status").json["available"])
+        seed_content()
+        with patch("app.routes.assistant.genai.Client") as gemini_client:
+            gemini_client.return_value.models.generate_content.return_value.text = "We offer software and website development."
+            response = self.client.post("/api/assistant/chat", json={"message": "What services do you offer?"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["reply"], "We offer software and website development.")
+        gemini_client.assert_called_once_with(api_key="test-gemini-key")
+        self.assertEqual(
+            gemini_client.return_value.models.generate_content.call_args.kwargs["model"],
+            "test-model",
+        )
+
+    def test_assistant_network_errors_do_not_expose_provider_details(self):
+        self.app.config["GEMINI_API_KEY"] = "test-gemini-key"
+        with patch("app.routes.assistant.genai.Client") as gemini_client:
+            gemini_client.return_value.models.generate_content.side_effect = httpx.ConnectError("private connection detail")
+            response = self.client.post("/api/assistant/chat", json={"message": "Can I start a project?"})
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Could not connect", response.json["error"])
+        self.assertNotIn("private connection detail", response.json["error"])
 
 
 if __name__ == "__main__":

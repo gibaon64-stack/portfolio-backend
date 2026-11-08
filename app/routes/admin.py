@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import cloudinary
 import cloudinary.uploader
-from cloudinary.exceptions import Error as CloudinaryError
+from cloudinary.exceptions import AuthorizationRequired, Error as CloudinaryError
 from flask import Blueprint, current_app, jsonify, request, send_from_directory
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from PIL import Image, UnidentifiedImageError
@@ -217,7 +217,7 @@ def service_pricing(value):
 
 
 def configure_cloudinary():
-    if not current_app.config.get("USE_CLOUDINARY"):
+    if not current_app.config.get("USE_CLOUDINARY") and not current_app.config.get("CLOUDINARY_REQUIRED"):
         return False
 
     cloudinary_url = current_app.config.get("CLOUDINARY_URL")
@@ -270,9 +270,15 @@ def upload_to_cloudinary(image_file, folder):
             allowed_formats=["jpg", "jpeg", "png", "webp"],
             transformation=[{"quality": "auto", "fetch_format": "auto"}],
         )
+    except AuthorizationRequired:  # pragma: no cover - provider failure depends on credentials
+        current_app.logger.error("Cloudinary rejected the server credentials.")
+        return None, None, "Cloudinary rejected its server credentials. Check the Cloudinary cloud name, API key, and API secret."
     except CloudinaryError:  # pragma: no cover - provider failure depends on network credentials
         current_app.logger.error("Cloudinary image upload failed.")
         return None, None, "Cloudinary image upload failed."
+    except OSError:  # pragma: no cover - provider failure depends on network
+        current_app.logger.error("Cloudinary image upload could not reach the provider.")
+        return None, None, "Could not connect to Cloudinary. Check the server network and try again."
 
     secure_url = result.get("secure_url") or result.get("url")
     public_id = result.get("public_id")
@@ -656,10 +662,16 @@ def upload_image():
     base_folder = (current_app.config.get("CLOUDINARY_FOLDER") or "mabrixel").strip("/")
     folder = f"{base_folder}/{context}"
 
-    cloudinary_enabled = current_app.config.get("USE_CLOUDINARY") or current_app.config.get("CLOUDINARY_REQUIRED")
+    cloudinary_enabled = (
+        current_app.config.get("USE_CLOUDINARY")
+        or current_app.config.get("CLOUDINARY_REQUIRED")
+        or context == "about"
+    )
     if cloudinary_enabled:
         if not configure_cloudinary():
-            return jsonify({"error": "Cloudinary is required but its server configuration is incomplete."}), 503
+            return jsonify({
+                "error": "Profile images require Cloudinary. Configure CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET on the backend.",
+            }), 503
         image_file.stream.seek(0)
         secure_url, public_id, cloudinary_error = upload_to_cloudinary(image_file.stream, folder)
         if cloudinary_error:
