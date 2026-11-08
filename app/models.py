@@ -25,6 +25,47 @@ class AdminUser(db.Model):
         return check_password_hash(self.password_hash, password)
 
 
+class User(db.Model):
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(254), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(256), nullable=False)
+    role = db.Column(db.String(32), nullable=False, default="user")
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, "email": self.email, "role": self.role}
+
+
+class MediaAsset(db.Model):
+    __tablename__ = "media_assets"
+
+    id = db.Column(db.Integer, primary_key=True)
+    public_id = db.Column(db.String(255), unique=True, nullable=False)
+    secure_url = db.Column(db.String(1000), nullable=False)
+    folder = db.Column(db.String(255), nullable=False)
+    resource_type = db.Column(db.String(32), nullable=False, default="image")
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "public_id": self.public_id,
+            "secure_url": self.secure_url,
+            "folder": self.folder,
+            "resource_type": self.resource_type,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
 class Profile(db.Model):
     __tablename__ = "profiles"
 
@@ -32,7 +73,15 @@ class Profile(db.Model):
     name = db.Column(db.String(160), nullable=False, default="Ian Mabruk")
     introduction = db.Column(db.Text, nullable=False, default="")
     hero_description = db.Column(db.Text, nullable=False, default="")
+    hero_image_url = db.Column(db.String(500))
+    about_intro = db.Column(db.Text, nullable=False, default="")
+    about_who_we_are = db.Column(db.Text, nullable=False, default="")
+    about_mission = db.Column(db.Text, nullable=False, default="")
+    about_what_we_do = db.Column(db.Text, nullable=False, default="")
+    about_approach = db.Column(db.Text, nullable=False, default="")
+    about_why_choose_us = db.Column(db.Text, nullable=False, default="")
     photo_url = db.Column(db.String(500))
+    contact_image_url = db.Column(db.String(500))
     location = db.Column(db.String(160))
     email = db.Column(db.String(254))
     phone = db.Column(db.String(48))
@@ -44,7 +93,15 @@ class Profile(db.Model):
             "name": self.name,
             "introduction": self.introduction,
             "hero_description": self.hero_description,
+            "hero_image_url": self.hero_image_url,
+            "about_intro": self.about_intro,
+            "about_who_we_are": self.about_who_we_are,
+            "about_mission": self.about_mission,
+            "about_what_we_do": self.about_what_we_do,
+            "about_approach": self.about_approach,
+            "about_why_choose_us": self.about_why_choose_us,
             "photo_url": self.photo_url,
+            "contact_image_url": self.contact_image_url,
             "location": self.location,
             "email": self.email,
             "phone": self.phone,
@@ -117,7 +174,9 @@ class Service(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(180), nullable=False)
     description = db.Column(db.Text, nullable=False)
+    image_url = db.Column(db.String(500))
     capabilities = db.Column(db.JSON, nullable=False, default=list)
+    pricing = db.Column(db.JSON, nullable=False, default=dict)
     position = db.Column(db.Integer, nullable=False, default=0)
     active = db.Column(db.Boolean, nullable=False, default=True)
 
@@ -126,7 +185,9 @@ class Service(db.Model):
             "id": self.id,
             "title": self.title,
             "description": self.description,
+            "image_url": self.image_url,
             "capabilities": self.capabilities or [],
+            "pricing": self.pricing or {},
             "position": self.position,
             "active": self.active,
         }
@@ -158,10 +219,13 @@ class Inquiry(db.Model):
     name = db.Column(db.String(120), nullable=False)
     email = db.Column(db.String(254), nullable=False, index=True)
     phone = db.Column(db.String(40))
+    business_name = db.Column(db.String(160))
     service = db.Column(db.String(180), nullable=False)
     budget = db.Column(db.String(80))
+    timeline = db.Column(db.String(120))
     message = db.Column(db.Text, nullable=False)
     status = db.Column(db.String(24), nullable=False, default="pending")
+    internal_notes = db.Column(db.Text, nullable=False, default="")
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, index=True)
 
     def to_dict(self):
@@ -170,9 +234,12 @@ class Inquiry(db.Model):
             "name": self.name,
             "email": self.email,
             "phone": self.phone,
+            "business_name": self.business_name,
             "service": self.service,
             "budget": self.budget,
+            "timeline": self.timeline,
             "message": self.message,
             "status": self.status,
+            "internal_notes": self.internal_notes,
             "created_at": self.created_at.isoformat(),
         }

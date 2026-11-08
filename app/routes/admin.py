@@ -1,14 +1,19 @@
 from functools import wraps
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
+import cloudinary
+import cloudinary.uploader
+from cloudinary.exceptions import Error as CloudinaryError
 from flask import Blueprint, current_app, jsonify, request, send_from_directory
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from PIL import Image, UnidentifiedImageError
+from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
-from app.models import AdminUser, Inquiry, JourneyEntry, Profile, Project, Service, SocialLink
+from app.models import AdminUser, Inquiry, JourneyEntry, MediaAsset, Profile, Project, Service, SocialLink
 
 
 admin_routes = Blueprint("admin", __name__, url_prefix="/api")
@@ -29,7 +34,8 @@ def admin_required(view):
     def wrapped(*args, **kwargs):
         if get_jwt().get("role") != "admin":
             return jsonify({"error": "Administrator access is required."}), 403
-        if not db.session.get(AdminUser, int(get_jwt_identity())):
+        admin = db.session.get(AdminUser, int(get_jwt_identity()))
+        if not admin or admin.role != "admin":
             return jsonify({"error": "Administrator account is unavailable."}), 401
         return view(*args, **kwargs)
 
@@ -64,8 +70,6 @@ def valid_url(value):
         return True
     if not isinstance(value, str) or len(value) > 1000:
         return False
-    from urllib.parse import urlparse
-
     parsed = urlparse(value)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc) and not parsed.username
 
@@ -81,6 +85,113 @@ def string_list(value, field, *, maximum=40, item_limit=180):
     return clean_values, None
 
 
+def service_pricing(value):
+    if not isinstance(value, dict):
+        return None, (jsonify({"error": "pricing must be a JSON object."}), 400)
+    allowed_keys = {"startingPrice", "estimatedRange", "pricingModel", "timeline", "deliverables", "stages", "optionalAddOns"}
+    if set(value) - allowed_keys:
+        return None, (jsonify({"error": "pricing contains an unsupported field."}), 400)
+    for key, limit in (("estimatedRange", 100), ("pricingModel", 100), ("timeline", 120)):
+        if key in value and (not isinstance(value[key], str) or len(value[key]) > limit):
+            return None, (jsonify({"error": f"pricing.{key} must be text up to {limit} characters."}), 400)
+    if "startingPrice" in value and (
+        not isinstance(value["startingPrice"], int)
+        or isinstance(value["startingPrice"], bool)
+        or value["startingPrice"] < 0
+    ):
+        return None, (jsonify({"error": "pricing.startingPrice must be a non-negative integer."}), 400)
+    for key in ("deliverables", "optionalAddOns"):
+        if key in value:
+            items, error = string_list(value[key], f"pricing.{key}", maximum=40, item_limit=180)
+            if error:
+                return None, error
+            value[key] = items
+    if "stages" in value:
+        stages = value["stages"]
+        if not isinstance(stages, list) or len(stages) > 40:
+            return None, (jsonify({"error": "pricing.stages must be a list of at most 40 items."}), 400)
+        normalized_stages = []
+        for stage in stages:
+            if (
+                not isinstance(stage, dict)
+                or not isinstance(stage.get("name"), str)
+                or not stage["name"].strip()
+                or len(stage["name"]) > 180
+                or not isinstance(stage.get("cost"), int)
+                or isinstance(stage.get("cost"), bool)
+                or stage["cost"] < 0
+            ):
+                return None, (jsonify({"error": "Each pricing stage needs a name and a non-negative integer cost."}), 400)
+            normalized_stages.append({"name": stage["name"].strip(), "cost": stage["cost"]})
+        value["stages"] = normalized_stages
+    return value, None
+
+
+def configure_cloudinary():
+    if not current_app.config.get("USE_CLOUDINARY"):
+        return False
+
+    cloudinary_url = current_app.config.get("CLOUDINARY_URL")
+    if cloudinary_url:
+        parsed = urlparse(cloudinary_url)
+        if (
+            parsed.scheme != "cloudinary"
+            or not parsed.hostname
+            or not parsed.username
+            or not parsed.password
+        ):
+            return False
+        config = {
+            "cloud_name": parsed.hostname,
+            "api_key": unquote(parsed.username),
+            "api_secret": unquote(parsed.password),
+            "secure": True,
+        }
+        if parsed.path.strip("/"):
+            config["private_cdn"] = True
+            config["secure_distribution"] = parsed.path.strip("/")
+        cloudinary.config(**config)
+        return True
+
+    cloud_name = current_app.config.get("CLOUDINARY_CLOUD_NAME")
+    api_key = current_app.config.get("CLOUDINARY_API_KEY")
+    api_secret = current_app.config.get("CLOUDINARY_API_SECRET")
+
+    if not all([cloud_name, api_key, api_secret]):
+        return False
+
+    cloudinary.config(
+        cloud_name=cloud_name,
+        api_key=api_key,
+        api_secret=api_secret,
+        secure=True,
+    )
+    return True
+
+
+def upload_to_cloudinary(image_file, folder):
+    if not configure_cloudinary():
+        return None, None, None
+
+    try:
+        result = cloudinary.uploader.upload(
+            image_file,
+            folder=folder,
+            resource_type="image",
+            allowed_formats=["jpg", "jpeg", "png", "webp"],
+            transformation=[{"quality": "auto", "fetch_format": "auto"}],
+        )
+    except CloudinaryError:  # pragma: no cover - provider failure depends on network credentials
+        current_app.logger.error("Cloudinary image upload failed.")
+        return None, None, "Cloudinary image upload failed."
+
+    secure_url = result.get("secure_url") or result.get("url")
+    public_id = result.get("public_id")
+    if not isinstance(secure_url, str) or not secure_url.startswith("https://") or not isinstance(public_id, str):
+        return None, None, "Cloudinary returned an invalid image response."
+    return secure_url, public_id, None
+
+
 def save_entity(entity, fields):
     payload, error = json_payload()
     if error:
@@ -88,6 +199,12 @@ def save_entity(entity, fields):
 
     for key, settings in fields.items():
         if key not in payload:
+            continue
+        if settings.get("json") == "pricing":
+            value, error = service_pricing(payload[key])
+            if error:
+                return error
+            setattr(entity, key, value)
             continue
         value, error = bounded_text(
             payload,
@@ -130,6 +247,7 @@ def overview():
         "total_projects": Project.query.count(),
         "published_projects": Project.query.filter_by(published=True).count(),
         "total_services": Service.query.count(),
+        "active_services": Service.query.filter_by(active=True).count(),
         "total_inquiries": Inquiry.query.count(),
         "recent_inquiries": [
             item.to_dict()
@@ -149,6 +267,7 @@ def all_content():
         "services": [item.to_dict() for item in Service.query.order_by(Service.position, Service.id)],
         "social_links": [item.to_dict() for item in SocialLink.query.order_by(SocialLink.position, SocialLink.id)],
         "inquiries": [item.to_dict() for item in Inquiry.query.order_by(Inquiry.created_at.desc()).limit(200)],
+        "media_assets": [item.to_dict() for item in MediaAsset.query.order_by(MediaAsset.created_at.desc()).limit(500)],
     })
 
 
@@ -163,7 +282,15 @@ def update_profile():
         "name": {"required": True, "limit": 160},
         "introduction": {"limit": 5000},
         "hero_description": {"limit": 1000},
+        "hero_image_url": {"limit": 500, "url": True, "optional": True},
+        "about_intro": {"limit": 3000},
+        "about_who_we_are": {"limit": 3000},
+        "about_mission": {"limit": 3000},
+        "about_what_we_do": {"limit": 3000},
+        "about_approach": {"limit": 3000},
+        "about_why_choose_us": {"limit": 3000},
         "photo_url": {"limit": 500, "url": True, "optional": True},
+        "contact_image_url": {"limit": 500, "url": True, "optional": True},
         "location": {"limit": 160},
         "email": {"limit": 254},
         "phone": {"limit": 48},
@@ -275,6 +402,8 @@ def create_service():
     error = save_entity(service, {
         "title": {"required": True, "limit": 180},
         "description": {"required": True, "limit": 3000},
+        "image_url": {"limit": 500, "url": True, "optional": True},
+        "pricing": {"json": "pricing"},
     })
     if error:
         return error
@@ -290,6 +419,8 @@ def update_service(service_id):
     error = save_entity(service, {
         "title": {"required": True, "limit": 180},
         "description": {"required": True, "limit": 3000},
+        "image_url": {"limit": 500, "url": True, "optional": True},
+        "pricing": {"json": "pricing"},
     })
     if error:
         return error
@@ -368,11 +499,19 @@ def update_inquiry(inquiry_id):
     payload, error = json_payload()
     if error:
         return error
-    status = payload.get("status")
-    if status not in INQUIRY_STATUSES:
-        return jsonify({"error": "Choose pending, contacted, or completed."}), 400
     inquiry = db.get_or_404(Inquiry, inquiry_id)
-    inquiry.status = status
+    if "status" in payload:
+        status = payload["status"]
+        if not isinstance(status, str) or status not in INQUIRY_STATUSES:
+            return jsonify({"error": "Choose pending, contacted, or completed."}), 400
+        inquiry.status = status
+    if "internal_notes" in payload:
+        notes = payload["internal_notes"]
+        if not isinstance(notes, str) or len(notes) > 5000:
+            return jsonify({"error": "Internal notes must be text up to 5,000 characters."}), 400
+        inquiry.internal_notes = notes.strip()
+    if "status" not in payload and "internal_notes" not in payload:
+        return jsonify({"error": "Provide a status or internal_notes update."}), 400
     db.session.commit()
     return jsonify(inquiry.to_dict())
 
@@ -393,22 +532,68 @@ def upload_image():
         return jsonify({"error": "Choose an image file."}), 400
     if not Path(secure_filename(image_file.filename)).suffix:
         return jsonify({"error": "Image files must have a filename extension."}), 400
+    allowed_mimetypes = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
+    expected_format = allowed_mimetypes.get(image_file.mimetype)
+    if not expected_format:
+        return jsonify({"error": "Upload a JPEG, PNG, or WebP image."}), 400
 
     try:
         image = Image.open(image_file.stream)
         image_format = image.format
         width, height = image.size
-        if image_format not in ALLOWED_IMAGE_FORMATS or width > 6000 or height > 6000 or width * height > 30_000_000:
+        if image_format != expected_format or width > 6000 or height > 6000 or width * height > 30_000_000:
             return jsonify({"error": "Upload a JPEG, PNG, or WebP image up to 6,000 px per side."}), 400
         image.verify()
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
         return jsonify({"error": "The uploaded file is not a valid supported image."}), 400
+
+    contexts = {"projects", "services", "about", "contact", "homepage"}
+    context = request.form.get("context", "homepage")
+    if context not in contexts:
+        return jsonify({"error": "Choose a supported image context."}), 400
+    base_folder = (current_app.config.get("CLOUDINARY_FOLDER") or "mabrixel").strip("/")
+    folder = f"{base_folder}/{context}"
+
+    cloudinary_enabled = current_app.config.get("USE_CLOUDINARY") or current_app.config.get("CLOUDINARY_REQUIRED")
+    if cloudinary_enabled:
+        if not configure_cloudinary():
+            return jsonify({"error": "Cloudinary is required but its server configuration is incomplete."}), 503
+        image_file.stream.seek(0)
+        secure_url, public_id, cloudinary_error = upload_to_cloudinary(image_file.stream, folder)
+        if cloudinary_error:
+            return jsonify({"error": cloudinary_error}), 502
+        asset = MediaAsset(public_id=public_id, secure_url=secure_url, folder=folder)
+        db.session.add(asset)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({"error": "Cloudinary returned an image identifier already in use."}), 502
+        return jsonify({"url": secure_url, "asset_id": public_id}), 201
 
     filename = f"{uuid4().hex}{ALLOWED_IMAGE_FORMATS[image_format]}"
     image_file.stream.seek(0)
     stored_image = Image.open(image_file.stream)
     stored_image.save(Path(current_app.config["UPLOAD_FOLDER"]) / filename, format=image_format)
     return jsonify({"url": f"/api/uploads/{filename}"}), 201
+
+
+@admin_routes.delete("/admin/uploads/<int:asset_id>")
+@admin_required
+def delete_uploaded_image(asset_id):
+    asset = db.get_or_404(MediaAsset, asset_id)
+    if not configure_cloudinary():
+        return jsonify({"error": "Cloudinary is not configured for image deletion."}), 503
+    try:
+        result = cloudinary.uploader.destroy(asset.public_id, resource_type=asset.resource_type)
+    except CloudinaryError:  # pragma: no cover - provider failure depends on network credentials
+        current_app.logger.error("Cloudinary image deletion failed.")
+        return jsonify({"error": "Cloudinary image deletion failed."}), 502
+    if result.get("result") != "ok":
+        return jsonify({"error": "Cloudinary did not confirm image deletion."}), 502
+    db.session.delete(asset)
+    db.session.commit()
+    return jsonify({"status": "deleted"})
 
 
 @admin_routes.get("/uploads/<path:filename>")

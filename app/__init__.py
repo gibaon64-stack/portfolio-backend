@@ -67,11 +67,7 @@ def create_app(test_config=None):
         seed_content()
         click.echo("Starter content is ready.")
 
-    @app.cli.command("create-admin")
-    @click.option("--email", prompt=True)
-    @click.option("--password", prompt=True, hide_input=True, confirmation_prompt=True)
-    def create_admin_command(email, password):
-        """Create an administrator without exposing credentials to the public API."""
+    def create_admin(email, password):
         from app.models import AdminUser
 
         normalized_email = email.strip().lower()
@@ -86,5 +82,29 @@ def create_app(test_config=None):
         db.session.add(admin)
         db.session.commit()
         click.echo("Administrator account created.")
+
+    @app.cli.command("create-admin")
+    @click.option("--email", prompt=True)
+    @click.option("--password", prompt=True, hide_input=True, confirmation_prompt=True)
+    def create_admin_command(email, password):
+        """Create an administrator without exposing credentials to the public API."""
+        create_admin(email, password)
+
+    @app.cli.command("provision-admin")
+    def provision_admin_command():
+        """Create the configured initial administrator without replacing an existing password."""
+        from app.models import AdminUser
+
+        email = os.getenv("INITIAL_ADMIN_EMAIL", "ian@gmail.com").strip().lower()
+        if "@" not in email or len(email) > 254:
+            raise click.ClickException("INITIAL_ADMIN_EMAIL must be a valid email address.")
+        if AdminUser.query.filter_by(email=email).first():
+            click.echo("Administrator already exists; its password was not changed.")
+            return
+
+        password = os.getenv("INITIAL_ADMIN_PASSWORD")
+        if not password:
+            raise click.ClickException("Set INITIAL_ADMIN_PASSWORD in the protected environment before provisioning.")
+        create_admin(email, password)
 
     return app

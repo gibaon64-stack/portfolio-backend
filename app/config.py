@@ -19,6 +19,16 @@ class Config:
         "UPLOAD_FOLDER",
         str(Path(__file__).resolve().parents[1] / "instance" / "uploads"),
     )
+    CLOUDINARY_URL = os.getenv("CLOUDINARY_URL")
+    CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
+    CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
+    CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
+    USE_CLOUDINARY = os.getenv(
+        "USE_CLOUDINARY",
+        "1" if CLOUDINARY_URL or all((CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET)) else "0",
+    ) == "1"
+    CLOUDINARY_REQUIRED = os.getenv("CLOUDINARY_REQUIRED", "1" if os.getenv("RENDER") else "0") == "1"
+    CLOUDINARY_FOLDER = os.getenv("CLOUDINARY_FOLDER", "mabrixel")
     FRONTEND_ORIGINS = [
         origin.strip()
         for origin in os.getenv("FRONTEND_ORIGIN", "http://localhost:5173").split(",")
