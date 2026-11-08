@@ -8,7 +8,6 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from flask import Flask, jsonify
 from flask_cors import CORS
-from werkzeug.security import generate_password_hash
 
 from app.config import Config
 from app.extensions import db, jwt, limiter, migrate
@@ -66,45 +65,5 @@ def create_app(test_config=None):
 
         seed_content()
         click.echo("Starter content is ready.")
-
-    def create_admin(email, password):
-        from app.models import AdminUser
-
-        normalized_email = email.strip().lower()
-        if "@" not in normalized_email or len(normalized_email) > 254:
-            raise click.ClickException("Enter a valid email address.")
-        if len(password) < 12:
-            raise click.ClickException("Use an administrator password with at least 12 characters.")
-        if AdminUser.query.filter_by(email=normalized_email).first():
-            raise click.ClickException("An administrator with that email already exists.")
-
-        admin = AdminUser(email=normalized_email, password_hash=generate_password_hash(password))
-        db.session.add(admin)
-        db.session.commit()
-        click.echo("Administrator account created.")
-
-    @app.cli.command("create-admin")
-    @click.option("--email", prompt=True)
-    @click.option("--password", prompt=True, hide_input=True, confirmation_prompt=True)
-    def create_admin_command(email, password):
-        """Create an administrator without exposing credentials to the public API."""
-        create_admin(email, password)
-
-    @app.cli.command("provision-admin")
-    def provision_admin_command():
-        """Create the configured initial administrator without replacing an existing password."""
-        from app.models import AdminUser
-
-        email = os.getenv("INITIAL_ADMIN_EMAIL", "ian@gmail.com").strip().lower()
-        if "@" not in email or len(email) > 254:
-            raise click.ClickException("INITIAL_ADMIN_EMAIL must be a valid email address.")
-        if AdminUser.query.filter_by(email=email).first():
-            click.echo("Administrator already exists; its password was not changed.")
-            return
-
-        password = os.getenv("INITIAL_ADMIN_PASSWORD")
-        if not password:
-            raise click.ClickException("Set INITIAL_ADMIN_PASSWORD in the protected environment before provisioning.")
-        create_admin(email, password)
 
     return app

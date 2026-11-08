@@ -13,8 +13,13 @@ from flask_jwt_extended import (
 )
 from sqlalchemy.exc import IntegrityError
 
+from app.admin_auth import (
+    admin_identity_matches,
+    constant_time_equal,
+    configured_admin_credentials,
+)
 from app.extensions import limiter
-from app.models import AdminUser, User, db
+from app.models import User, db
 
 
 auth_routes = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -28,19 +33,28 @@ def login():
     if not isinstance(payload, dict):
         return jsonify({"error": "Enter your administrator credentials."}), 400
 
-    email = str(payload.get("email", "")).strip().lower()
+    credentials = configured_admin_credentials()
+    if credentials is None:
+        return jsonify({"error": "Administrator authentication is not configured."}), 503
+
+    email = payload.get("email")
     password = payload.get("password", "")
-    admin = AdminUser.query.filter_by(email=email).first()
-    if not admin or admin.role != "admin" or not isinstance(password, str) or not admin.check_password(password):
+    email = email.strip().lower() if isinstance(email, str) else ""
+    email_matches = constant_time_equal(email, credentials[0])
+    password_matches = (
+        isinstance(password, str)
+        and constant_time_equal(password, credentials[1])
+    )
+    if not email_matches or not password_matches:
         return jsonify({"error": "Email or password is incorrect."}), 401
 
     access_token = create_access_token(
-        identity=str(admin.id),
-        additional_claims={"role": admin.role},
+        identity=credentials[0],
+        additional_claims={"role": "admin"},
         expires_delta=timedelta(seconds=current_app.config["JWT_ACCESS_TOKEN_EXPIRES"]),
     )
     response = jsonify({
-        "user": {"id": admin.id, "email": admin.email, "role": admin.role},
+        "user": {"email": credentials[0], "role": "admin"},
         "csrf_token": get_csrf_token(access_token),
     })
     set_access_cookies(response, access_token)
@@ -112,11 +126,13 @@ def login_user():
 def current_user():
     if get_jwt().get("role") != "admin":
         return jsonify({"error": "Administrator access is required."}), 403
-    admin = db.session.get(AdminUser, int(get_jwt_identity()))
-    if not admin:
-        return jsonify({"error": "Administrator account is unavailable."}), 401
+    credentials = configured_admin_credentials()
+    if credentials is None:
+        return jsonify({"error": "Administrator authentication is not configured."}), 503
+    if not admin_identity_matches(get_jwt_identity()):
+        return jsonify({"error": "Administrator access is required."}), 403
     return jsonify({
-        "user": {"id": admin.id, "email": admin.email, "role": admin.role},
+        "user": {"email": credentials[0], "role": "admin"},
         "csrf_token": get_jwt().get("csrf"),
     })
 

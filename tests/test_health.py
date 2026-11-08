@@ -1,5 +1,6 @@
 from io import BytesIO
 from pathlib import Path
+import secrets
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -8,7 +9,7 @@ from PIL import Image
 
 from app import create_app
 from app.extensions import db
-from app.models import AdminUser, Inquiry, MediaAsset, Service, User
+from app.models import Inquiry, MediaAsset, Service, User
 from app.seed import seed_content
 from app.routes.admin import configure_cloudinary
 import cloudinary
@@ -17,10 +18,14 @@ import cloudinary
 class PortfolioApiTests(unittest.TestCase):
     def setUp(self):
         self.upload_directory = tempfile.TemporaryDirectory()
+        self.admin_email = f"{secrets.token_hex(8)}@example.test"
+        self.admin_password = secrets.token_urlsafe(24)
         self.app = create_app({
             "TESTING": True,
             "SECRET_KEY": "test-secret-key-with-at-least-32-bytes",
             "JWT_SECRET_KEY": "test-jwt-secret-key-with-at-least-32-bytes",
+            "INITIAL_ADMIN_EMAIL": self.admin_email,
+            "INITIAL_ADMIN_PASSWORD": self.admin_password,
             "SQLALCHEMY_DATABASE_URI": "sqlite://",
             "JWT_COOKIE_SECURE": False,
             "RATELIMIT_ENABLED": False,
@@ -36,6 +41,12 @@ class PortfolioApiTests(unittest.TestCase):
         db.drop_all()
         self.context.pop()
         self.upload_directory.cleanup()
+
+    def login_admin(self, email=None, password=None):
+        return self.client.post("/api/auth/login", json={
+            "email": self.admin_email if email is None else email,
+            "password": self.admin_password if password is None else password,
+        })
 
     def test_health_route_returns_ok(self):
         response = self.client.get(
@@ -152,6 +163,8 @@ class PortfolioApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/auth/user/me").status_code, 200)
         self.assertEqual(self.client.get("/api/admin/overview").status_code, 403)
         self.assertEqual(self.client.get("/api/auth/me").status_code, 403)
+        admin_login = self.client.post("/api/auth/login", json=registration)
+        self.assertEqual(admin_login.status_code, 401)
 
     def test_public_registration_rejects_invalid_details(self):
         response = self.client.post("/api/auth/register", json={
@@ -161,21 +174,25 @@ class PortfolioApiTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 400)
 
-    def test_admin_routes_require_login_and_accept_hashed_admin(self):
+    def test_admin_login_uses_only_configured_credentials_and_protects_routes(self):
         response = self.client.get("/api/admin/overview")
         self.assertEqual(response.status_code, 401)
 
-        admin = AdminUser(email="admin@example.com")
-        admin.set_password("not-a-real-password-123")
-        db.session.add(admin)
-        db.session.commit()
+        wrong_password = self.login_admin(password=secrets.token_urlsafe(24))
+        self.assertEqual(wrong_password.status_code, 401)
 
-        login = self.client.post("/api/auth/login", json={
-            "email": "ADMIN@example.com",
-            "password": "not-a-real-password-123",
-        })
+        wrong_email = self.login_admin(email=f"{secrets.token_hex(8)}@example.test")
+        self.assertEqual(wrong_email.status_code, 401)
+
+        login = self.login_admin()
         self.assertEqual(login.status_code, 200)
+        self.assertEqual(login.json["user"]["email"], self.admin_email)
+        self.assertEqual(login.json["user"]["role"], "admin")
         self.assertIn("csrf_token", login.json)
+
+        current_admin = self.client.get("/api/auth/me")
+        self.assertEqual(current_admin.status_code, 200)
+        self.assertEqual(current_admin.json["user"]["email"], self.admin_email)
 
         overview = self.client.get("/api/admin/overview")
         self.assertEqual(overview.status_code, 200)
@@ -230,10 +247,27 @@ class PortfolioApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/portfolio").json["projects"], [])
         self.assertEqual(self.client.delete(f"/api/admin/projects/{draft.json['id']}", headers=csrf_header).status_code, 200)
 
+        logout = self.client.post("/api/auth/logout", headers=csrf_header)
+        self.assertEqual(logout.status_code, 200)
+        self.assertEqual(self.client.get("/api/admin/overview").status_code, 401)
+
+    def test_admin_login_and_protected_routes_reject_missing_environment_credentials(self):
+        self.app.config["INITIAL_ADMIN_PASSWORD"] = None
+
+        login = self.login_admin()
+        self.assertEqual(login.status_code, 503)
+        self.assertNotIn(self.admin_password, login.get_data(as_text=True))
+        self.assertEqual(self.client.get("/api/admin/overview").status_code, 401)
+
+        self.app.config["INITIAL_ADMIN_PASSWORD"] = self.admin_password
+        successful_login = self.login_admin()
+        self.assertEqual(successful_login.status_code, 200)
+        self.app.config["INITIAL_ADMIN_EMAIL"] = None
+        protected = self.client.get("/api/admin/overview")
+        self.assertEqual(protected.status_code, 503)
+        self.assertNotIn(self.admin_password, protected.get_data(as_text=True))
+
     def test_admin_service_pricing_contact_and_inquiry_updates_persist(self):
-        admin = AdminUser(email="content@example.com")
-        admin.set_password("not-a-real-password-654")
-        db.session.add(admin)
         inquiry = Inquiry(
             name="Test Contact",
             email="contact@example.com",
@@ -242,10 +276,7 @@ class PortfolioApiTests(unittest.TestCase):
         )
         db.session.add(inquiry)
         db.session.commit()
-        login = self.client.post("/api/auth/login", json={
-            "email": admin.email,
-            "password": "not-a-real-password-654",
-        })
+        login = self.login_admin()
         csrf_header = {"X-CSRF-TOKEN": login.json["csrf_token"]}
 
         service = self.client.post("/api/admin/services", json={
@@ -315,14 +346,7 @@ class PortfolioApiTests(unittest.TestCase):
         unauthorized = self.client.post("/api/admin/uploads")
         self.assertEqual(unauthorized.status_code, 401)
 
-        admin = AdminUser(email="uploads@example.com")
-        admin.set_password("not-a-real-password-456")
-        db.session.add(admin)
-        db.session.commit()
-        login = self.client.post("/api/auth/login", json={
-            "email": admin.email,
-            "password": "not-a-real-password-456",
-        })
+        login = self.login_admin()
         csrf_header = {"X-CSRF-TOKEN": login.json["csrf_token"]}
 
         invalid_image = self.client.post(
@@ -357,14 +381,7 @@ class PortfolioApiTests(unittest.TestCase):
             "CLOUDINARY_API_SECRET": "test-secret",
             "CLOUDINARY_FOLDER": "mabrixel",
         })
-        admin = AdminUser(email="cloudinary@example.com")
-        admin.set_password("not-a-real-password-789")
-        db.session.add(admin)
-        db.session.commit()
-        login = self.client.post("/api/auth/login", json={
-            "email": admin.email,
-            "password": "not-a-real-password-789",
-        })
+        login = self.login_admin()
         csrf_header = {"X-CSRF-TOKEN": login.json["csrf_token"]}
 
         image_buffer = BytesIO()
@@ -405,25 +422,6 @@ class PortfolioApiTests(unittest.TestCase):
         with self.app.app_context():
             self.assertTrue(configure_cloudinary())
         self.assertEqual(cloudinary.config().cloud_name, "test-cloud")
-
-    def test_admin_provision_command_is_idempotent_and_does_not_replace_password(self):
-        runner = self.app.test_cli_runner()
-        environment = {
-            "INITIAL_ADMIN_EMAIL": "ian@gmail.com",
-            "INITIAL_ADMIN_PASSWORD": "initial-provisioning-password",
-        }
-        with patch.dict("os.environ", environment):
-            first = runner.invoke(args=["provision-admin"])
-            self.assertEqual(first.exit_code, 0, first.output)
-            admin = AdminUser.query.filter_by(email="ian@gmail.com").one()
-            admin.set_password("rotated-admin-password")
-            db.session.commit()
-
-            second = runner.invoke(args=["provision-admin"])
-
-        self.assertEqual(second.exit_code, 0, second.output)
-        self.assertEqual(AdminUser.query.filter_by(email="ian@gmail.com").count(), 1)
-        self.assertTrue(admin.check_password("rotated-admin-password"))
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ services:
     branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: flask --app run:app db upgrade && flask --app run:app seed-content && gunicorn run:app --bind 0.0.0.0:$PORT
-    initialDeployHook: flask --app run:app provision-admin
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
@@ -23,7 +22,7 @@ services:
       - key: FRONTEND_ORIGIN
         value: https://portfolio-mabrixel.netlify.app
       - key: INITIAL_ADMIN_EMAIL
-        value: ian@gmail.com
+        sync: false
       - key: INITIAL_ADMIN_PASSWORD
         sync: false
       - key: CLOUDINARY_REQUIRED

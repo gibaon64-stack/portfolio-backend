@@ -12,8 +12,9 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
+from app.admin_auth import admin_identity_matches, configured_admin_credentials
 from app.extensions import db
-from app.models import AdminUser, Inquiry, JourneyEntry, MediaAsset, Profile, Project, Service, SocialLink
+from app.models import Inquiry, JourneyEntry, MediaAsset, Profile, Project, Service, SocialLink
 
 
 admin_routes = Blueprint("admin", __name__, url_prefix="/api")
@@ -34,9 +35,10 @@ def admin_required(view):
     def wrapped(*args, **kwargs):
         if get_jwt().get("role") != "admin":
             return jsonify({"error": "Administrator access is required."}), 403
-        admin = db.session.get(AdminUser, int(get_jwt_identity()))
-        if not admin or admin.role != "admin":
-            return jsonify({"error": "Administrator account is unavailable."}), 401
+        if configured_admin_credentials() is None:
+            return jsonify({"error": "Administrator authentication is not configured."}), 503
+        if not admin_identity_matches(get_jwt_identity()):
+            return jsonify({"error": "Administrator access is required."}), 403
         return view(*args, **kwargs)
 
     return wrapped

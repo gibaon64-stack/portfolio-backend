@@ -6,6 +6,8 @@ from pathlib import Path
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY") or secrets.token_hex(32)
+    INITIAL_ADMIN_EMAIL = os.getenv("INITIAL_ADMIN_EMAIL")
+    INITIAL_ADMIN_PASSWORD = os.getenv("INITIAL_ADMIN_PASSWORD")
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///portfolio.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JWT_TOKEN_LOCATION = ["cookies"]

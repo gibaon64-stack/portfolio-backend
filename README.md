@@ -14,27 +14,29 @@ python -m venv .venv
 Copy-Item .env.example .env
 .\.venv\Scripts\python.exe -m flask --app run:app db upgrade
 .\.venv\Scripts\python.exe -m flask --app run:app seed-content
-.\.venv\Scripts\python.exe -m flask --app run:app create-admin
 .\.venv\Scripts\python.exe run.py
 ```
 
-The API listens on port `5000` by default. The `create-admin` command prompts
-for an email and a password of at least 12 characters. Public accounts register
-through `/api/auth/register` and remain separate from administrators.
+Set `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD` in the backend `.env`
+before starting the API. These are the only administrator login credentials;
+the login endpoint does not read or create administrator database accounts.
+Public accounts register through `/api/auth/register` and remain separate from
+administrator access.
 
 ## Deploy on Render
 
 Configure the existing Render service to use the `backend/render.yaml` settings.
-Set `INITIAL_ADMIN_PASSWORD` as a protected environment secret; never pass it in
-a deploy command or commit it. The initial hook provisions `ian@gmail.com`
-idempotently and does not replace an existing password. For an already deployed
-service, apply database migrations and run `flask --app run:app provision-admin`
-from Render Shell once after setting the secret.
+Set both `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD` in the backend
+service's protected environment settings. Do not put credentials in the
+frontend's Netlify environment or in source control. The login endpoint
+authenticates directly against these environment values; no admin account is
+created during deployment.
 
 Set `FRONTEND_ORIGIN` to `https://portfolio-mabrixel.netlify.app`. The separate
 frontend repository contains the Netlify build configuration and proxies
-`/api/*` to this Render API, keeping JWT and CSRF cookies same-origin in the
-browser.
+`/api/*` to this Render API. The browser therefore uses same-origin HTTP-only
+JWT cookies through the proxy; the backend also allows the configured frontend
+origin for credentialed CORS requests.
 
 Review the Render plan and database retention settings before relying on them.
 Production media is stored on Cloudinary rather than Render's temporary disk.
