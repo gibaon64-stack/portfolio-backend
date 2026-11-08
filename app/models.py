@@ -71,7 +71,12 @@ class Profile(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(160), nullable=False, default="Ian Mabruk")
+    professional_title = db.Column(db.String(180), nullable=False, default="")
     introduction = db.Column(db.Text, nullable=False, default="")
+    skills = db.Column(db.JSON, nullable=True, default=list)
+    experience = db.Column(db.JSON, nullable=True, default=list)
+    education = db.Column(db.JSON, nullable=True, default=list)
+    certifications = db.Column(db.JSON, nullable=True, default=list)
     hero_description = db.Column(db.Text, nullable=False, default="")
     hero_image_url = db.Column(db.String(500))
     about_intro = db.Column(db.Text, nullable=False, default="")
@@ -91,7 +96,12 @@ class Profile(db.Model):
         return {
             "id": self.id,
             "name": self.name,
+            "professional_title": self.professional_title,
             "introduction": self.introduction,
+            "skills": self.skills or [],
+            "experience": self.experience or [],
+            "education": self.education or [],
+            "certifications": self.certifications or [],
             "hero_description": self.hero_description,
             "hero_image_url": self.hero_image_url,
             "about_intro": self.about_intro,
@@ -136,6 +146,7 @@ class Project(db.Model):
     name = db.Column(db.String(180), nullable=False)
     category = db.Column(db.String(80), nullable=False)
     description = db.Column(db.Text, nullable=False)
+    detailed_description = db.Column(db.Text)
     status = db.Column(db.String(80))
     cover_image = db.Column(db.String(500))
     features = db.Column(db.JSON, nullable=False, default=list)
@@ -146,6 +157,7 @@ class Project(db.Model):
     live_url = db.Column(db.String(1000))
     github_url = db.Column(db.String(1000))
     published = db.Column(db.Boolean, nullable=False, default=False)
+    featured = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
@@ -155,6 +167,7 @@ class Project(db.Model):
             "name": self.name,
             "category": self.category,
             "description": self.description,
+            "detailed_description": self.detailed_description,
             "status": self.status,
             "cover_image": self.cover_image,
             "features": self.features or [],
@@ -165,6 +178,7 @@ class Project(db.Model):
             "live_url": self.live_url,
             "github_url": self.github_url,
             "published": self.published,
+            "featured": self.featured,
         }
 
 

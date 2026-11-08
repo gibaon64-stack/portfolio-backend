@@ -70,8 +70,20 @@ def valid_url(value):
         return True
     if not isinstance(value, str) or len(value) > 1000:
         return False
-    parsed = urlparse(value)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc) and not parsed.username
+    if any(character.isspace() for character in value):
+        return False
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and bool(hostname)
+        and parsed.username is None
+        and parsed.password is None
+    )
 
 
 def string_list(value, field, *, maximum=40, item_limit=180):
@@ -88,7 +100,16 @@ def string_list(value, field, *, maximum=40, item_limit=180):
 def service_pricing(value):
     if not isinstance(value, dict):
         return None, (jsonify({"error": "pricing must be a JSON object."}), 400)
-    allowed_keys = {"startingPrice", "estimatedRange", "pricingModel", "timeline", "deliverables", "stages", "optionalAddOns"}
+    allowed_keys = {
+        "startingPrice",
+        "estimatedRange",
+        "pricingModel",
+        "timeline",
+        "deliverables",
+        "stages",
+        "optionalAddOns",
+        "packages",
+    }
     if set(value) - allowed_keys:
         return None, (jsonify({"error": "pricing contains an unsupported field."}), 400)
     for key, limit in (("estimatedRange", 100), ("pricingModel", 100), ("timeline", 120)):
@@ -124,6 +145,72 @@ def service_pricing(value):
                 return None, (jsonify({"error": "Each pricing stage needs a name and a non-negative integer cost."}), 400)
             normalized_stages.append({"name": stage["name"].strip(), "cost": stage["cost"]})
         value["stages"] = normalized_stages
+    if "packages" in value:
+        packages = value["packages"]
+        expected_prices = {"BRONZE": 12000, "SILVER": 16000, "GOLD": 22000}
+        if not isinstance(packages, list) or len(packages) > len(expected_prices):
+            return None, (jsonify({"error": "pricing.packages must contain at most three packages."}), 400)
+        normalized_packages = []
+        seen_names = set()
+        for package in packages:
+            if not isinstance(package, dict):
+                return None, (jsonify({"error": "Each pricing package must be an object."}), 400)
+            allowed_package_keys = {
+                "name",
+                "price",
+                "description",
+                "included_services",
+                "platform_count",
+                "content_details",
+                "management_details",
+            }
+            if set(package) - allowed_package_keys:
+                return None, (jsonify({"error": "A pricing package contains an unsupported field."}), 400)
+            name = package.get("name")
+            price = package.get("price")
+            if (
+                not isinstance(name, str)
+                or name not in expected_prices
+                or name in seen_names
+                or not isinstance(price, int)
+                or isinstance(price, bool)
+                or price != expected_prices.get(name)
+            ):
+                return None, (jsonify({"error": "Use the BRONZE, SILVER, and GOLD names with their configured prices."}), 400)
+            description = package.get("description", "")
+            if not isinstance(description, str) or len(description) > 500:
+                return None, (jsonify({"error": "Package descriptions must be text up to 500 characters."}), 400)
+            included_services, error = string_list(
+                package.get("included_services", []),
+                "pricing.packages.included_services",
+                maximum=30,
+                item_limit=180,
+            )
+            if error:
+                return None, error
+            platform_count = package.get("platform_count")
+            if platform_count is not None and (
+                not isinstance(platform_count, int)
+                or isinstance(platform_count, bool)
+                or not 1 <= platform_count <= 100
+            ):
+                return None, (jsonify({"error": "Package platform_count must be a positive integer or null."}), 400)
+            details = {}
+            for key in ("content_details", "management_details"):
+                item = package.get(key, "")
+                if not isinstance(item, str) or len(item) > 1000:
+                    return None, (jsonify({"error": f"Package {key} must be text up to 1,000 characters."}), 400)
+                details[key] = item.strip()
+            normalized_packages.append({
+                "name": name,
+                "price": price,
+                "description": description.strip(),
+                "included_services": included_services,
+                "platform_count": platform_count,
+                **details,
+            })
+            seen_names.add(name)
+        value["packages"] = normalized_packages
     return value, None
 
 
@@ -206,6 +293,12 @@ def save_entity(entity, fields):
                 return error
             setattr(entity, key, value)
             continue
+        if settings.get("json") == "list":
+            value, error = string_list(payload[key], key, maximum=80, item_limit=500)
+            if error:
+                return error
+            setattr(entity, key, value)
+            continue
         value, error = bounded_text(
             payload,
             key,
@@ -226,7 +319,7 @@ def save_entity(entity, fields):
                 return error
             setattr(entity, key, value)
 
-    for key in ("published", "active"):
+    for key in ("published", "active", "featured"):
         if key in payload:
             if not isinstance(payload[key], bool):
                 return jsonify({"error": f"{key} must be a boolean."}), 400
@@ -280,7 +373,12 @@ def update_profile():
         db.session.add(profile)
     error = save_entity(profile, {
         "name": {"required": True, "limit": 160},
+        "professional_title": {"limit": 180},
         "introduction": {"limit": 5000},
+        "skills": {"json": "list"},
+        "experience": {"json": "list"},
+        "education": {"json": "list"},
+        "certifications": {"json": "list"},
         "hero_description": {"limit": 1000},
         "hero_image_url": {"limit": 500, "url": True, "optional": True},
         "about_intro": {"limit": 3000},
@@ -348,6 +446,7 @@ def create_project():
         "name": {"required": True, "limit": 180},
         "category": {"required": True, "limit": 80},
         "description": {"required": True, "limit": 5000},
+        "detailed_description": {"limit": 10000, "optional": True},
         "status": {"limit": 80},
         "cover_image": {"limit": 500, "url": True, "optional": True},
         "challenges": {"limit": 3000, "optional": True},
@@ -372,6 +471,7 @@ def update_project(project_id):
         "name": {"required": True, "limit": 180},
         "category": {"required": True, "limit": 80},
         "description": {"required": True, "limit": 5000},
+        "detailed_description": {"limit": 10000, "optional": True},
         "status": {"limit": 80},
         "cover_image": {"limit": 500, "url": True, "optional": True},
         "challenges": {"limit": 3000, "optional": True},

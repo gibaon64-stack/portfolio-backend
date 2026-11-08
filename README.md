@@ -31,9 +31,10 @@ idempotently and does not replace an existing password. For an already deployed
 service, apply database migrations and run `flask --app run:app provision-admin`
 from Render Shell once after setting the secret.
 
-Set `FRONTEND_ORIGIN` to `https://portfolio-mabrixel.netlify.app`. Netlify builds
-from the repository root using `netlify.toml` and proxies `/api/*` to the Render
-API. This keeps JWT and CSRF cookies same-origin in the browser.
+Set `FRONTEND_ORIGIN` to `https://portfolio-mabrixel.netlify.app`. The separate
+frontend repository contains the Netlify build configuration and proxies
+`/api/*` to this Render API, keeping JWT and CSRF cookies same-origin in the
+browser.
 
 Review the Render plan and database retention settings before relying on them.
 Production media is stored on Cloudinary rather than Render's temporary disk.
@@ -49,6 +50,14 @@ Never commit `.env` files, local databases, or credential values.
 The admin image library stores Cloudinary secure URLs and public asset IDs.
 Image upload contexts are separated into `mabrixel/projects`, `services`,
 `about`, `contact`, and `homepage`; deleting an image is an explicit admin action.
+
+Project records include separate short and detailed descriptions, thumbnail and
+live/repository URLs, technology lists, featured and publication flags. The
+additive `3c0e8a1594b2` migration also adds editable professional profile fields
+without dropping or rewriting existing records. Apply it with the existing
+`flask --app run:app db upgrade` deployment command. Digital Marketing package
+names and prices are seeded only when package data is absent; the seed command
+does not replace existing customized package descriptions or inclusions.
 
 ## Verify
 

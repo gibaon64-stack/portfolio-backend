@@ -104,6 +104,36 @@ SERVICES = [
     ),
 ]
 
+MARKETING_PACKAGES = [
+    {
+        "name": "BRONZE",
+        "price": 12000,
+        "description": "A KES 12,000 package. Confirm the included platforms and service scope before booking.",
+        "included_services": [],
+        "platform_count": None,
+        "content_details": "",
+        "management_details": "",
+    },
+    {
+        "name": "SILVER",
+        "price": 16000,
+        "description": "A KES 16,000 package. Confirm the included platforms and service scope before booking.",
+        "included_services": [],
+        "platform_count": None,
+        "content_details": "",
+        "management_details": "",
+    },
+    {
+        "name": "GOLD",
+        "price": 22000,
+        "description": "A KES 22,000 package. Confirm the included platforms and service scope before booking.",
+        "included_services": [],
+        "platform_count": None,
+        "content_details": "",
+        "management_details": "",
+    },
+]
+
 
 def seed_content():
     if not Profile.query.first():
@@ -133,5 +163,12 @@ def seed_content():
                 capabilities=capabilities,
                 position=position,
             ))
+
+    marketing_service = Service.query.filter_by(title="Digital Marketing").first()
+    if marketing_service:
+        pricing = dict(marketing_service.pricing or {})
+        if "packages" not in pricing:
+            pricing["packages"] = MARKETING_PACKAGES
+            marketing_service.pricing = pricing
 
     db.session.commit()

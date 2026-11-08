@@ -8,7 +8,7 @@ from PIL import Image
 
 from app import create_app
 from app.extensions import db
-from app.models import AdminUser, Inquiry, MediaAsset, User
+from app.models import AdminUser, Inquiry, MediaAsset, Service, User
 from app.seed import seed_content
 from app.routes.admin import configure_cloudinary
 import cloudinary
@@ -86,6 +86,20 @@ class PortfolioApiTests(unittest.TestCase):
                 "Mobile Application Development",
                 "Digital Marketing",
             ],
+        )
+        marketing = next(service for service in response.json["services"] if service["title"] == "Digital Marketing")
+        self.assertEqual(
+            [(package["name"], package["price"]) for package in marketing["pricing"]["packages"]],
+            [("BRONZE", 12000), ("SILVER", 16000), ("GOLD", 22000)],
+        )
+        marketing["pricing"]["packages"][0]["description"] = "Customized bronze package."
+        marketing_service = Service.query.filter_by(title="Digital Marketing").one()
+        marketing_service.pricing = marketing["pricing"]
+        db.session.commit()
+        seed_content()
+        self.assertEqual(
+            Service.query.filter_by(title="Digital Marketing").one().pricing["packages"][0]["description"],
+            "Customized bronze package.",
         )
         self.assertEqual(response.json["projects"], [])
         self.assertEqual(response.json["social_links"], [])
@@ -173,13 +187,30 @@ class PortfolioApiTests(unittest.TestCase):
             "name": "Verified project",
             "category": "Web Applications",
             "description": "A project supplied by the administrator.",
+            "detailed_description": "Detailed project information.",
             "technologies": ["React", "Flask"],
+            "live_url": "https://example.com/projects/verified",
+            "github_url": "https://github.com/example/verified",
+            "featured": True,
             "published": True,
         }, headers=csrf_header)
         self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json["detailed_description"], "Detailed project information.")
+        self.assertTrue(created.json["featured"])
+        self.assertEqual(created.json["live_url"], "https://example.com/projects/verified")
 
+        draft = self.client.post("/api/admin/projects", json={
+            "name": "Unpublished project",
+            "category": "Web Applications",
+            "description": "A draft should not be public.",
+            "published": False,
+        }, headers=csrf_header)
+        self.assertEqual(draft.status_code, 201)
         public_projects = self.client.get("/api/portfolio").json["projects"]
         self.assertEqual([project["name"] for project in public_projects], ["Verified project"])
+        self.assertEqual(public_projects[0]["live_url"], "https://example.com/projects/verified")
+        self.assertTrue(public_projects[0]["featured"])
+        self.assertEqual(public_projects[0]["detailed_description"], "Detailed project information.")
 
         replaced = self.client.put(f"/api/admin/projects/{created.json['id']}", json={
             "cover_image": "https://res.cloudinary.com/test/image/upload/replacement.webp",
@@ -187,10 +218,17 @@ class PortfolioApiTests(unittest.TestCase):
         self.assertEqual(replaced.status_code, 200)
         self.assertEqual(replaced.json["cover_image"], "https://res.cloudinary.com/test/image/upload/replacement.webp")
         self.assertEqual(replaced.json["description"], "A project supplied by the administrator.")
+        self.assertEqual(replaced.json["live_url"], "https://example.com/projects/verified")
+
+        invalid_url = self.client.put(f"/api/admin/projects/{created.json['id']}", json={
+            "live_url": "https://example.com/a path",
+        }, headers=csrf_header)
+        self.assertEqual(invalid_url.status_code, 400)
 
         deleted = self.client.delete(f"/api/admin/projects/{created.json['id']}", headers=csrf_header)
         self.assertEqual(deleted.status_code, 200)
         self.assertEqual(self.client.get("/api/portfolio").json["projects"], [])
+        self.assertEqual(self.client.delete(f"/api/admin/projects/{draft.json['id']}", headers=csrf_header).status_code, 200)
 
     def test_admin_service_pricing_contact_and_inquiry_updates_persist(self):
         admin = AdminUser(email="content@example.com")
@@ -224,8 +262,33 @@ class PortfolioApiTests(unittest.TestCase):
         self.assertEqual(service.status_code, 201)
         self.assertEqual(self.client.get("/api/portfolio").json["services"][0]["pricing"]["startingPrice"], 85000)
 
+        packages = [
+            {"name": "BRONZE", "price": 12000, "description": "Bronze scope", "included_services": [], "platform_count": None, "content_details": "", "management_details": ""},
+            {"name": "SILVER", "price": 16000, "description": "Silver scope", "included_services": ["Campaign planning"], "platform_count": 2, "content_details": "To be agreed", "management_details": "To be agreed"},
+            {"name": "GOLD", "price": 22000, "description": "Gold scope", "included_services": [], "platform_count": 3, "content_details": "", "management_details": ""},
+        ]
+        package_update = self.client.put(f"/api/admin/services/{service.json['id']}", json={
+            "pricing": {"packages": packages},
+        }, headers=csrf_header)
+        self.assertEqual(package_update.status_code, 200)
+        self.assertEqual(
+            [package["price"] for package in package_update.json["pricing"]["packages"]],
+            [12000, 16000, 22000],
+        )
+
+        invalid_packages = [dict(packages[0], price=16000)]
+        invalid_package_update = self.client.put(f"/api/admin/services/{service.json['id']}", json={
+            "pricing": {"packages": invalid_packages},
+        }, headers=csrf_header)
+        self.assertEqual(invalid_package_update.status_code, 400)
+
         profile = self.client.put("/api/admin/profile", json={
             "name": "Mabrixel",
+            "professional_title": "Software Engineer",
+            "skills": ["React", "Flask"],
+            "experience": ["Founder at Mabrixel Technologies"],
+            "education": ["Software Engineering"],
+            "certifications": ["Certification supplied by profile owner"],
             "email": "hello@example.com",
             "phone": "+254700000000",
             "location": "Kenya",
@@ -236,6 +299,9 @@ class PortfolioApiTests(unittest.TestCase):
         public_content = self.client.get("/api/portfolio").json
         self.assertEqual(public_content["contact"]["email"], "hello@example.com")
         self.assertEqual(public_content["profile"]["about_intro"], "An editable company introduction.")
+        self.assertEqual(public_content["profile"]["professional_title"], "Software Engineer")
+        self.assertEqual(public_content["profile"]["skills"], ["React", "Flask"])
+        self.assertEqual(public_content["profile"]["experience"], ["Founder at Mabrixel Technologies"])
 
         updated = self.client.patch(f"/api/admin/inquiries/{inquiry.id}", json={
             "status": "contacted",
