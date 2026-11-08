@@ -68,7 +68,6 @@ class PortfolioApiTests(unittest.TestCase):
             "SECRET_KEY": "cors-test-secret-key-with-at-least-32-bytes",
             "JWT_SECRET_KEY": "cors-test-jwt-secret-key-with-at-least-32-bytes",
             "SQLALCHEMY_DATABASE_URI": "sqlite://",
-            "FRONTEND_ORIGINS": [frontend_origin],
             "UPLOAD_FOLDER": self.upload_directory.name,
         })
         response = app.test_client().options(
