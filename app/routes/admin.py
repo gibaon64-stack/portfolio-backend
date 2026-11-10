@@ -662,28 +662,28 @@ def upload_image():
     base_folder = (current_app.config.get("CLOUDINARY_FOLDER") or "mabrixel").strip("/")
     folder = f"{base_folder}/{context}"
 
-    cloudinary_enabled = (
-        current_app.config.get("USE_CLOUDINARY")
-        or current_app.config.get("CLOUDINARY_REQUIRED")
-        or context == "about"
+    cloudinary_enabled = current_app.config.get("USE_CLOUDINARY") or current_app.config.get(
+        "CLOUDINARY_REQUIRED"
     )
     if cloudinary_enabled:
         if not configure_cloudinary():
-            return jsonify({
-                "error": "Profile images require Cloudinary. Configure CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET on the backend.",
-            }), 503
-        image_file.stream.seek(0)
-        secure_url, public_id, cloudinary_error = upload_to_cloudinary(image_file.stream, folder)
-        if cloudinary_error:
-            return jsonify({"error": cloudinary_error}), 502
-        asset = MediaAsset(public_id=public_id, secure_url=secure_url, folder=folder)
-        db.session.add(asset)
-        try:
-            db.session.commit()
-        except IntegrityError:
-            db.session.rollback()
-            return jsonify({"error": "Cloudinary returned an image identifier already in use."}), 502
-        return jsonify({"url": secure_url, "asset_id": public_id}), 201
+            if current_app.config.get("CLOUDINARY_REQUIRED"):
+                return jsonify({
+                    "error": "Cloudinary is required for image uploads. Configure CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET on the backend.",
+                }), 503
+        else:
+            image_file.stream.seek(0)
+            secure_url, public_id, cloudinary_error = upload_to_cloudinary(image_file.stream, folder)
+            if cloudinary_error:
+                return jsonify({"error": cloudinary_error}), 502
+            asset = MediaAsset(public_id=public_id, secure_url=secure_url, folder=folder)
+            db.session.add(asset)
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                return jsonify({"error": "Cloudinary returned an image identifier already in use."}), 502
+            return jsonify({"url": secure_url, "asset_id": public_id}), 201
 
     filename = f"{uuid4().hex}{ALLOWED_IMAGE_FORMATS[image_format]}"
     image_file.stream.seek(0)

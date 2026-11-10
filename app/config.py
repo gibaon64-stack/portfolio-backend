@@ -29,7 +29,7 @@ class Config:
         "USE_CLOUDINARY",
         "1" if CLOUDINARY_URL or all((CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET)) else "0",
     ) == "1"
-    CLOUDINARY_REQUIRED = os.getenv("CLOUDINARY_REQUIRED", "1" if os.getenv("RENDER") else "0") == "1"
+    CLOUDINARY_REQUIRED = os.getenv("CLOUDINARY_REQUIRED", "0") == "1"
     CLOUDINARY_FOLDER = os.getenv("CLOUDINARY_FOLDER", "mabrixel")
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")

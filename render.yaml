@@ -36,7 +36,7 @@ services:
       - key: GEMINI_MODEL
         value: gemini-3.8-flash
       - key: CLOUDINARY_REQUIRED
-        value: "1"
+        value: "0"
       - key: COOKIE_SECURE
         value: "1"
       - key: COOKIE_SAMESITE

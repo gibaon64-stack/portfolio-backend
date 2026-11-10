@@ -500,9 +500,9 @@ class PortfolioApiTests(unittest.TestCase):
         self.assertIn("rejected its server credentials", response.json["error"])
         self.assertNotIn("credentials rejected", response.json["error"])
 
-    def test_profile_upload_requires_cloudinary_and_reports_missing_configuration(self):
+    def test_profile_upload_falls_back_to_local_storage_without_cloudinary(self):
         self.app.config.update({
-            "USE_CLOUDINARY": False,
+            "USE_CLOUDINARY": True,
             "CLOUDINARY_REQUIRED": False,
             "CLOUDINARY_CLOUD_NAME": None,
             "CLOUDINARY_API_KEY": None,
@@ -518,8 +518,31 @@ class PortfolioApiTests(unittest.TestCase):
             data={"image": (image_buffer, "profile.png"), "context": "about"},
             headers=headers,
         )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json["url"].startswith("/api/uploads/"))
+        self.assertTrue(Path(self.upload_directory.name, response.json["url"].rsplit("/", 1)[-1]).exists())
+        self.assertEqual(MediaAsset.query.count(), 0)
+
+    def test_required_cloudinary_reports_missing_configuration(self):
+        self.app.config.update({
+            "USE_CLOUDINARY": False,
+            "CLOUDINARY_REQUIRED": True,
+            "CLOUDINARY_CLOUD_NAME": None,
+            "CLOUDINARY_API_KEY": None,
+            "CLOUDINARY_API_SECRET": None,
+        })
+        login = self.login_admin()
+        headers = {"X-CSRF-TOKEN": login.json["csrf_token"]}
+        image_buffer = BytesIO()
+        Image.new("RGB", (8, 8), color="green").save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+        response = self.client.post(
+            "/api/admin/uploads",
+            data={"image": (image_buffer, "profile.png"), "context": "about"},
+            headers=headers,
+        )
         self.assertEqual(response.status_code, 503)
-        self.assertIn("Profile images require Cloudinary", response.json["error"])
+        self.assertIn("Cloudinary is required", response.json["error"])
         self.assertEqual(MediaAsset.query.count(), 0)
 
     def test_profile_photo_url_persists_and_is_returned_publicly(self):

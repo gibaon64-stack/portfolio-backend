@@ -38,11 +38,12 @@ frontend repository contains the Netlify build configuration and proxies
 JWT cookies through the proxy; the backend also allows the configured frontend
 origin for credentialed CORS requests.
 
-Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and
-`CLOUDINARY_API_SECRET` in the Render backend service's protected environment
-settings. These values are required because production uploads do not fall back
-to local disk. Alternatively, configure a `CLOUDINARY_URL` instead of the three
-individual values.
+For persistent production media, set `CLOUDINARY_CLOUD_NAME`,
+`CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` in the Render backend
+service's protected environment settings. Alternatively, configure a
+`CLOUDINARY_URL` instead of the three individual values. Without Cloudinary,
+uploads fall back to the backend's local disk; on Render, local files are
+temporary and may disappear when the service restarts or redeploys.
 
 Set `GEMINI_API_KEY` in the same protected environment settings to enable
 Mabrook's backend chat endpoint (`POST /api/assistant/chat`). The key is never
@@ -55,18 +56,20 @@ Production media is stored on Cloudinary rather than Render's temporary disk.
 ## Configuration
 
 Configure `FRONTEND_ORIGIN`, `DATABASE_URL`, `SECRET_KEY`, `JWT_SECRET_KEY`,
-`COOKIE_SECURE`, and `CLOUDINARY_REQUIRED` through the environment. Configure
-Cloudinary using either `CLOUDINARY_URL` or the three `CLOUDINARY_*` variables.
+`COOKIE_SECURE`, and optionally `CLOUDINARY_REQUIRED` through the environment.
+Set `CLOUDINARY_REQUIRED=1` to reject uploads when Cloudinary is unavailable.
+Configure Cloudinary using either `CLOUDINARY_URL` or the three
+`CLOUDINARY_*` variables.
 Configure `GEMINI_API_KEY` to enable the rate-limited Mabrook assistant and
 optionally set `GEMINI_MODEL`.
 Use unique random signing keys and the existing durable production database.
 Never commit `.env` files, local databases, or credential values.
 
-The admin image library stores Cloudinary secure URLs and public asset IDs.
-Image upload contexts are separated into `mabrixel/projects`, `services`,
-`about`, `contact`, and `homepage`; deleting an image is an explicit admin action.
-Profile images always require Cloudinary so a temporary local upload URL cannot
-be saved as a persistent profile image.
+The admin image library stores Cloudinary secure URLs and public asset IDs for
+Cloudinary uploads. Image upload contexts are separated into
+`mabrixel/projects`, `services`, `about`, `contact`, and `homepage`; deleting a
+Cloudinary image is an explicit admin action. When Cloudinary is not configured
+and not required, uploads use local disk storage, including profile images.
 
 Project records include separate short and detailed descriptions, thumbnail and
 live/repository URLs, technology lists, featured and publication flags. The
