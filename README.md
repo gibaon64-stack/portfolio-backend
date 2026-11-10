@@ -67,9 +67,13 @@ Never commit `.env` files, local databases, or credential values.
 
 The admin image library stores Cloudinary secure URLs and public asset IDs for
 Cloudinary uploads. Image upload contexts are separated into
-`mabrixel/projects`, `services`, `about`, `contact`, and `homepage`; deleting a
+`mabrixel/projects`, `services`, `about`, `contact`, `homepage`, and `journey`; deleting a
 Cloudinary image is an explicit admin action. When Cloudinary is not configured
 and not required, uploads use local disk storage, including profile images.
+
+The additive `76d4b8c2f901` migration adds profile technologies, organization
+and multiple image URLs per Journey milestone, and project display ordering.
+Existing profile, milestone, project, and inquiry records are retained.
 
 Project records include separate short and detailed descriptions, thumbnail and
 live/repository URLs, technology lists, featured and publication flags. The

@@ -74,6 +74,7 @@ class Profile(db.Model):
     professional_title = db.Column(db.String(180), nullable=False, default="")
     introduction = db.Column(db.Text, nullable=False, default="")
     skills = db.Column(db.JSON, nullable=True, default=list)
+    technologies = db.Column(db.JSON, nullable=True, default=list)
     experience = db.Column(db.JSON, nullable=True, default=list)
     education = db.Column(db.JSON, nullable=True, default=list)
     certifications = db.Column(db.JSON, nullable=True, default=list)
@@ -99,6 +100,7 @@ class Profile(db.Model):
             "professional_title": self.professional_title,
             "introduction": self.introduction,
             "skills": self.skills or [],
+            "technologies": self.technologies or [],
             "experience": self.experience or [],
             "education": self.education or [],
             "certifications": self.certifications or [],
@@ -124,7 +126,9 @@ class JourneyEntry(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(180), nullable=False)
     period = db.Column(db.String(120))
+    organization = db.Column(db.String(180))
     description = db.Column(db.Text, nullable=False)
+    image_urls = db.Column(db.JSON, nullable=True, default=list)
     position = db.Column(db.Integer, nullable=False, default=0)
     published = db.Column(db.Boolean, nullable=False, default=True)
 
@@ -133,7 +137,9 @@ class JourneyEntry(db.Model):
             "id": self.id,
             "title": self.title,
             "period": self.period,
+            "organization": self.organization,
             "description": self.description,
+            "image_urls": self.image_urls or [],
             "position": self.position,
             "published": self.published,
         }
@@ -156,6 +162,7 @@ class Project(db.Model):
     screenshots = db.Column(db.JSON, nullable=False, default=list)
     live_url = db.Column(db.String(1000))
     github_url = db.Column(db.String(1000))
+    position = db.Column(db.Integer, nullable=False, default=0, server_default="0")
     published = db.Column(db.Boolean, nullable=False, default=False)
     featured = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
@@ -177,6 +184,7 @@ class Project(db.Model):
             "screenshots": self.screenshots or [],
             "live_url": self.live_url,
             "github_url": self.github_url,
+            "position": self.position,
             "published": self.published,
             "featured": self.featured,
         }

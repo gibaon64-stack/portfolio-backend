@@ -13,7 +13,7 @@ from cloudinary.exceptions import AuthorizationRequired
 
 from app import create_app
 from app.extensions import db
-from app.models import Inquiry, MediaAsset, Service, User
+from app.models import Inquiry, JourneyEntry, MediaAsset, Project, Service, User
 from app.seed import seed_content
 from app.routes.admin import configure_cloudinary
 import cloudinary
@@ -357,6 +357,7 @@ class PortfolioApiTests(unittest.TestCase):
             "name": "Mabrixel",
             "professional_title": "Software Engineer",
             "skills": ["React", "Flask"],
+            "technologies": ["Python", "JavaScript"],
             "experience": ["Founder at Mabrixel Technologies"],
             "education": ["Software Engineering"],
             "certifications": ["Certification supplied by profile owner"],
@@ -372,6 +373,7 @@ class PortfolioApiTests(unittest.TestCase):
         self.assertEqual(public_content["profile"]["about_intro"], "An editable company introduction.")
         self.assertEqual(public_content["profile"]["professional_title"], "Software Engineer")
         self.assertEqual(public_content["profile"]["skills"], ["React", "Flask"])
+        self.assertEqual(public_content["profile"]["technologies"], ["Python", "JavaScript"])
         self.assertEqual(public_content["profile"]["experience"], ["Founder at Mabrixel Technologies"])
 
         updated = self.client.patch(f"/api/admin/inquiries/{inquiry.id}", json={
@@ -381,6 +383,51 @@ class PortfolioApiTests(unittest.TestCase):
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(updated.json["internal_notes"], "Follow up next week.")
         self.assertEqual(db.session.get(Inquiry, inquiry.id).status, "contacted")
+
+    def test_journey_images_and_project_order_are_admin_editable(self):
+        login = self.login_admin()
+        headers = {"X-CSRF-TOKEN": login.json["csrf_token"]}
+        journey = self.client.post("/api/admin/journey", json={
+            "title": "Product launch",
+            "period": "2025",
+            "organization": "Mabrixel Technologies",
+            "description": "Led the first product launch.",
+            "image_urls": [
+                "https://res.cloudinary.com/example/image/upload/launch-1.jpg",
+                "https://res.cloudinary.com/example/image/upload/launch-2.jpg",
+            ],
+            "position": 0,
+            "published": True,
+        }, headers=headers)
+        self.assertEqual(journey.status_code, 201)
+        self.assertEqual(len(journey.json["image_urls"]), 2)
+        self.assertEqual(journey.json["organization"], "Mabrixel Technologies")
+
+        replacement = self.client.put(f"/api/admin/journey/{journey.json['id']}", json={
+            "title": "Product launch",
+            "description": "Led the first product launch.",
+            "image_urls": ["https://res.cloudinary.com/example/image/upload/replacement.jpg"],
+        }, headers=headers)
+        self.assertEqual(replacement.status_code, 200)
+        self.assertEqual(len(replacement.json["image_urls"]), 1)
+        self.assertEqual(self.client.get("/api/portfolio").json["journey"][0]["image_urls"], replacement.json["image_urls"])
+
+        project_ids = []
+        for name, position in (("Second", 1), ("First", 0)):
+            response = self.client.post("/api/admin/projects", json={
+                "name": name,
+                "category": "Website Development",
+                "description": f"{name} project description.",
+                "live_url": f"https://{name.lower()}.example.test",
+                "position": position,
+                "published": True,
+            }, headers=headers)
+            self.assertEqual(response.status_code, 201)
+            project_ids.append(response.json["id"])
+        published = self.client.get("/api/portfolio").json["projects"]
+        self.assertEqual([project["name"] for project in published], ["First", "Second"])
+        self.assertEqual(Project.query.count(), 2)
+        self.assertEqual(JourneyEntry.query.count(), 1)
 
     def test_upload_and_social_urls_are_validated(self):
         unauthorized = self.client.post("/api/admin/uploads")
@@ -406,6 +453,16 @@ class PortfolioApiTests(unittest.TestCase):
         )
         self.assertEqual(uploaded.status_code, 201)
         self.assertTrue(Path(self.upload_directory.name, uploaded.json["url"].rsplit("/", 1)[-1]).exists())
+
+        journey_image = BytesIO()
+        Image.new("RGB", (8, 8), color="red").save(journey_image, format="PNG")
+        journey_image.seek(0)
+        journey_upload = self.client.post(
+            "/api/admin/uploads",
+            data={"image": (journey_image, "journey.png"), "context": "journey"},
+            headers=csrf_header,
+        )
+        self.assertEqual(journey_upload.status_code, 201)
 
         unsafe_link = self.client.post("/api/admin/social-links", json={
             "platform": "Portfolio",

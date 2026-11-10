@@ -32,7 +32,7 @@ def get_portfolio():
         ],
         "projects": [
             item.to_dict()
-            for item in Project.query.filter_by(published=True).order_by(Project.created_at.desc())
+            for item in Project.query.filter_by(published=True).order_by(Project.position, Project.id)
         ],
         "services": [
             item.to_dict()
@@ -101,7 +101,10 @@ def create_inquiry():
     if idempotency_key:
         existing = Inquiry.query.filter_by(idempotency_key=idempotency_key).first()
         if existing:
-            return jsonify({"id": existing.id, "status": existing.status}), 200
+            return jsonify({
+                "id": existing.id,
+                "status": existing.status,
+            }), 200
 
     inquiry = Inquiry(
         name=name,
@@ -125,6 +128,12 @@ def create_inquiry():
         if idempotency_key:
             existing = Inquiry.query.filter_by(idempotency_key=idempotency_key).first()
             if existing:
-                return jsonify({"id": existing.id, "status": existing.status}), 200
+                return jsonify({
+                    "id": existing.id,
+                    "status": existing.status,
+                }), 200
         raise
-    return jsonify({"id": inquiry.id, "status": inquiry.status}), 201
+    return jsonify({
+        "id": inquiry.id,
+        "status": inquiry.status,
+    }), 201

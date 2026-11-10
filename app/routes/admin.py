@@ -307,6 +307,14 @@ def save_entity(entity, fields):
                 return error
             setattr(entity, key, value)
             continue
+        if settings.get("json") == "urls":
+            value, error = string_list(payload[key], key, maximum=20, item_limit=1000)
+            if error:
+                return error
+            if any(not valid_url(item) for item in value):
+                return jsonify({"error": f"{key} must contain only http or https URLs."}), 400
+            setattr(entity, key, value)
+            continue
         value, error = bounded_text(
             payload,
             key,
@@ -365,7 +373,7 @@ def all_content():
     return jsonify({
         "profile": profile.to_dict() if profile else None,
         "journey": [item.to_dict() for item in JourneyEntry.query.order_by(JourneyEntry.position, JourneyEntry.id)],
-        "projects": [item.to_dict() for item in Project.query.order_by(Project.created_at.desc())],
+        "projects": [item.to_dict() for item in Project.query.order_by(Project.position, Project.id)],
         "services": [item.to_dict() for item in Service.query.order_by(Service.position, Service.id)],
         "social_links": [item.to_dict() for item in SocialLink.query.order_by(SocialLink.position, SocialLink.id)],
         "inquiries": [item.to_dict() for item in Inquiry.query.order_by(Inquiry.created_at.desc()).limit(200)],
@@ -385,6 +393,7 @@ def update_profile():
         "professional_title": {"limit": 180, "empty_as_none": False},
         "introduction": {"limit": 5000, "empty_as_none": False},
         "skills": {"json": "list"},
+        "technologies": {"json": "list"},
         "experience": {"json": "list"},
         "education": {"json": "list"},
         "certifications": {"json": "list"},
@@ -415,7 +424,9 @@ def create_journey():
     error = save_entity(entry, {
         "title": {"required": True, "limit": 180},
         "period": {"limit": 120},
+        "organization": {"limit": 180, "optional": True},
         "description": {"required": True, "limit": 5000},
+        "image_urls": {"json": "urls"},
     })
     if error:
         return error
@@ -431,7 +442,9 @@ def update_journey(entry_id):
     error = save_entity(entry, {
         "title": {"required": True, "limit": 180},
         "period": {"limit": 120},
+        "organization": {"limit": 180, "optional": True},
         "description": {"required": True, "limit": 5000},
+        "image_urls": {"json": "urls"},
     })
     if error:
         return error
@@ -656,7 +669,7 @@ def upload_image():
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
         return jsonify({"error": "The uploaded file is not a valid supported image."}), 400
 
-    contexts = {"projects", "services", "about", "contact", "homepage"}
+    contexts = {"projects", "services", "about", "contact", "homepage", "journey"}
     context = request.form.get("context", "homepage")
     if context not in contexts:
         return jsonify({"error": "Choose a supported image context."}), 400

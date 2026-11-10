@@ -104,7 +104,7 @@ def _public_documents():
         if content:
             documents.append((f"Service: {service.title}", content))
 
-    for project in Project.query.filter_by(published=True).order_by(Project.created_at.desc()):
+    for project in Project.query.filter_by(published=True).order_by(Project.position, Project.id):
         content = "\n".join(
             part for part in (
                 project.description,
