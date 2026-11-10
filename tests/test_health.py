@@ -523,6 +523,37 @@ class PortfolioApiTests(unittest.TestCase):
         self.assertTrue(Path(self.upload_directory.name, response.json["url"].rsplit("/", 1)[-1]).exists())
         self.assertEqual(MediaAsset.query.count(), 0)
 
+        profile_update = self.client.put(
+            "/api/admin/profile",
+            json={
+                "name": "Test Profile",
+                "professional_title": "",
+                "introduction": "",
+                "skills": [],
+                "experience": [],
+                "education": [],
+                "certifications": [],
+                "hero_description": "",
+                "hero_image_url": None,
+                "about_intro": "",
+                "about_who_we_are": "",
+                "about_mission": "",
+                "about_what_we_do": "",
+                "about_approach": "",
+                "about_why_choose_us": "",
+                "photo_url": f"https://portfolio-mabrixel.netlify.app{response.json['url']}",
+                "contact_image_url": None,
+                "location": None,
+                "email": None,
+                "phone": None,
+            },
+            headers=headers,
+        )
+        self.assertEqual(profile_update.status_code, 200, profile_update.get_json())
+        self.assertEqual(profile_update.json["professional_title"], "")
+        self.assertEqual(profile_update.json["photo_url"], f"https://portfolio-mabrixel.netlify.app{response.json['url']}")
+        self.assertIsNone(profile_update.json["email"])
+
     def test_required_cloudinary_reports_missing_configuration(self):
         self.app.config.update({
             "USE_CLOUDINARY": False,

@@ -51,7 +51,7 @@ def json_payload():
     return payload, None
 
 
-def bounded_text(payload, key, *, required=False, limit=5000, optional=False):
+def bounded_text(payload, key, *, required=False, limit=5000, optional=False, empty_as_none=True):
     if key not in payload and not required:
         return None, None
     raw = payload.get(key)
@@ -64,7 +64,7 @@ def bounded_text(payload, key, *, required=False, limit=5000, optional=False):
         return None, (jsonify({"error": f"{key} is required."}), 400)
     if len(value) > limit:
         return None, (jsonify({"error": f"{key} must be at most {limit} characters."}), 400)
-    return value or None, None
+    return (value or None) if empty_as_none else value, None
 
 
 def valid_url(value):
@@ -313,6 +313,7 @@ def save_entity(entity, fields):
             required=settings.get("required", False),
             limit=settings.get("limit", 5000),
             optional=settings.get("optional", False),
+            empty_as_none=settings.get("empty_as_none", True),
         )
         if error:
             return error
@@ -381,25 +382,25 @@ def update_profile():
         db.session.add(profile)
     error = save_entity(profile, {
         "name": {"required": True, "limit": 160},
-        "professional_title": {"limit": 180},
-        "introduction": {"limit": 5000},
+        "professional_title": {"limit": 180, "empty_as_none": False},
+        "introduction": {"limit": 5000, "empty_as_none": False},
         "skills": {"json": "list"},
         "experience": {"json": "list"},
         "education": {"json": "list"},
         "certifications": {"json": "list"},
-        "hero_description": {"limit": 1000},
+        "hero_description": {"limit": 1000, "empty_as_none": False},
         "hero_image_url": {"limit": 500, "url": True, "optional": True},
-        "about_intro": {"limit": 3000},
-        "about_who_we_are": {"limit": 3000},
-        "about_mission": {"limit": 3000},
-        "about_what_we_do": {"limit": 3000},
-        "about_approach": {"limit": 3000},
-        "about_why_choose_us": {"limit": 3000},
+        "about_intro": {"limit": 3000, "empty_as_none": False},
+        "about_who_we_are": {"limit": 3000, "empty_as_none": False},
+        "about_mission": {"limit": 3000, "empty_as_none": False},
+        "about_what_we_do": {"limit": 3000, "empty_as_none": False},
+        "about_approach": {"limit": 3000, "empty_as_none": False},
+        "about_why_choose_us": {"limit": 3000, "empty_as_none": False},
         "photo_url": {"limit": 500, "url": True, "optional": True},
         "contact_image_url": {"limit": 500, "url": True, "optional": True},
-        "location": {"limit": 160},
-        "email": {"limit": 254},
-        "phone": {"limit": 48},
+        "location": {"limit": 160, "optional": True},
+        "email": {"limit": 254, "optional": True},
+        "phone": {"limit": 48, "optional": True},
     })
     if error:
         return error
